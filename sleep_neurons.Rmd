@@ -1,0 +1,449 @@
+---
+title: "Identification of subpopulations of sleep-inducing neurons in the mouse hypothalamus using single-cell RNA-seq"
+author: "Dean Lee"
+date: "11/30/2018"
+output: html_notebook
+---
+
+# Abstract
+
+The cellular composition of complex tissues is often prerequisite knowledge for further inquiry of the function of the tissues of interest. The advent of single-cell RNA-sequencing (scRNA-seq) technology and the accompanying bioinformatics tools to analyze the resulting datasets has been a boon to biologists. In the field of behavioral neuroscience, scRNA-seq has been widely used to elucidate the neuron subtypes within a population of neurons implicated in a stereotyped behavior. Chung et al. have secured a scRNA-seq dataset from a population of neurons known to induce sleep in mice. While they have explored broad trends in their dataset and reported two general markers for that entire neuron population, they have not fully taken advantage of the power of scRNA-seq datasets to identify subtypes of neurons within the whole population. Using principal component analysis and unsupervised clustering, I have further subdivided that population into three clusters based on gene expression differences. I then defined markers for each cluster using differential gene expression analysis. While markers defined in silico may not correspond to the actual biology of the cells of interest, some of the markers I defined were corroborated by in vivo data from the Allen Brain Institute.
+
+# Table of Contents
+##### I. Introduction  
+##### II. Background and Data
+##### III. Methods  
+##### IV. Example of Analysis  
+##### V. Discussion  
+##### VI. References  
+##### VII. Supplement  
+
+# Introduction
+
+Chung et al. are interested in a specific population of neurons in the ventrolateral preoptic area (VLPO) and the median preoptic area (MnPO) of the hypothalamus that controls sleep in mice. They found that these neurons are active during sleep, and activating these neurons induces sleep. While the general location of these neurons is known to be the preoptic area (POA) of the hypothalamus, it is not clear which genetic markers distinguish them from other types of neurons in the POA, which also contains wake-active neurons. Knowing these markers is crucial for accurate genetic targeting and circuit analysis of these sleep-inducing neurons. Chung et al. used single-cell RNA-seq on a purified population of sleep-inducing neurons from the POA. They found that Tac1 and Pdyn are two strong markers for this population of neurons. However, they did not analyze their scRNA-seq dataset further to ask whether there might be subtypes of neurons that subdivide this population. Because sleep is a finely regulated state with distinct stages (NREM and REM), it likely involves more than a single type of neurons. Therefore, it is important to ask whether there are subtypes of sleep-inducing neurons that might coordinate different stages of sleep, and what the subtype-specific markers are.
+
+# Background and Data
+
+Single-cell RNA-seq is an approach to unntangle the cell-type heterogeneity of complex tissues or cell populations. It begins with dissociating the tissue or population of interest into single cells. After lysing each cell, each cell's RNA content is extracted and reverse-transcribed into cDNA. The cDNA is amplified into a sequencing library, from which small samples are submitted to a next-generation sequencer. The sequencing results are returned as FASTQ files, which need to be preprocessed into a counts matrix before any meaningful analysis can be done. To identify potential cell types from the counts matrix, principal component analysis (PCA) and unsupervised classification are used to define clusters that can potentially correspond to distinct cell types. Marker genes for each cluster can then be computed via differential gene expression analysis. To formally confirm that these markers actually label distinct cell types, they need to be visualized in vivo in the tissue or cell population it came from.
+
+The dataset I am working with is a scRNA-seq dataset. It contains counts from 84 sleep-inducing neurons from the mouse POA. Each neuron was sorted into a 96-well plate through a fluorescence-activated cell-sorter. They used the SMARTer Ultra Low RNA Kit for Illumina Sequencing to reverse-transcribe the RNA, amplify the cDNA, and construct the 84 cDNA libraries. The libraries were sequenced on the Illuminia HiSeq 2000 or 2500.
+
+A scRNA-seq dataseq differs from a microarray dataset or a bulk RNA-seq dataset. A microarray dataset will only contain information about the transcripts for which the microarray has specified probes for; it is a biased capture of RNA content from the cells of interest. RNA-seq, both bulk and single-cell, is able to capture RNA without that bias. Bulk RNA-seq provides gene expression information on the entire cell population that was sequenced. Single-cell RNA-seq goes a step further; it provides gene expression information on each individual cell that was sequenced. As a result of each method's technical design, microarray datasets are typically smaller than bulk RNA-seq datasets, which are typically smaller than scRNA-seq datasets.
+
+# Methods
+
+I performed the following, standard preprocessing steps on this scRNA-seq dataset from the command line:  
+1. Download the raw data in the form of FASTQ files from SRA.  
+Module: sratoolkit  
+2. Perform quality control of FASTQ files.  
+Module: fastqc  
+3. Align reads to a mouse reference genome (Mus_musculus.GRCm38).  
+Module: STAR  
+4. Manipulate alignments in BAM files to allow read retrieval.  
+Module: samtools  
+5. Generate a counts matrix from the BAM files.  
+Module: subread  
+
+In R, I further prepared the counts matrix so that it is ready for analysis:  
+1. Load the counts matrix and perform cell-level and gene-level quality control.  
+Package: SingleCellExperiment, scater  
+2. Convert the SingleCellExperiment object to a Seurat object.  
+Package: Seurat  
+
+To analyze the dataset, I used the Seurat package in R:  
+1. Normalize data.  
+2. Compute principal components (PCs) and select some for clustering.  
+3. Used unsupervised classification to define clusters.  
+4. Visualize the distribution of the clusters in a tSNE plot.  
+5. Perform differential gene expression analysis to identify marker genes for each cluster.  
+6. Visualize the distribution of individual markers in tSNE plots.  
+
+# Example of Analysis
+
+The dataset can be accessed at https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE79108.
+
+~~~~~~~~~~
+# after the preprocessing steps and getting the dataset as a Seurat object, normalize the data
+sn = NormalizeData(sn, normalization.method = "LogNormalize")
+
+# find the most highly variable genes to use for computing PCs
+sn = FindVariableGenes(sn, y.cutoff = 1, x.low.cutoff = 0.0125, x.high.cutoff = 2)
+
+# compute PCs
+sn = ScaleData(sn, genes.use = sn@var.genes , vars.to.regress = c("nUMI"), use.umi = TRUE, model.use = 'negbinom', block.size = 5000)
+sn = RunPCA(sn, pcs.compute = 30, maxit = 250, verbose = T)
+
+# select the PCs that best account for the variation in the data, note the PCs with significance under 0.05
+sn = JackStraw(sn, num.pc = 30)
+JackStrawPlot(sn, PCs = 1:30)
+
+# use the selected PCs to define clusters with an unsupervised classifier
+sn = FindClusters(sn, dims.use = sn_dims, k.param = 10, save.SNN = T, n.start = 10, algorithm = 3, resolution = 1, print.output = F)
+
+# visualize clusters on a tSNE plot
+sn = RunTSNE(sn, reduction.use = "pca", dims.use = sn_dims, eta = 200, max_iter = 400, perplexity = 10, theta = 0.1, verbose = TRUE)
+TSNEPlot(sn, do.label = T, colors.use = scales::hue_pal()(length(levels(sn@ident))))
+
+# find differentially expressed genes for each cluster
+sn.markers = FindAllMarkers(sn, logfc.threshold = 0.5, test.use = 'MAST', only.pos = T, min.diff.pct = 0.1, min.pct = 0.1, latent.vars = c('nUMI'), do.print = TRUE)
+~~~~~~~~~~
+
+I identified 20 markers for Cluster 1, 91 markers for Cluster 2, 61 markers for Cluster 3, and 47 markers for Cluster 4. The top 10 markers for each cluster is shown below. The complete list of markers can be found in the supplement.
+
+```{r}
+head(filter(sn.markers, cluster == 1),10)
+head(filter(sn.markers, cluster == 2),10)
+head(filter(sn.markers, cluster == 3),10)
+head(filter(sn.markers, cluster == 4),10)
+```
+
+After visualizing the markers for each cluster on tSNE plots, it is clear that some of these markers are not exclusive to only one cluster. They were removed from further consideration as subtype markers. It also became clear that Clusters 1 and 2 share a larger number of markers, while Clusters 3 and 4 each has its own set of markers. It may be that the heterogeneity of these sleep-inducing neurons is really better described when Cluster 1 and 2 are considered as one cluster.
+
+The following are markers that are 1) highly restricted to one of the three groups (Cluster 1/2, Cluster 3, and Cluster 4) and 2) confirmed to be in a specific region of the POA by in situ hybridization data from the Allen Brain Institute.
+
+Clusters 1/2: C1ql2, Col19a1  
+
+C1ql2  
+![C1ql2](/Users/deanlee/Desktop/sleep_neurons/C1ql2.png)  
+
+Col19a1  
+![Col19a1](/Users/deanlee/Desktop/sleep_neurons/Col19a1.png)  
+
+Cluster 3: Gpx3, Ngb  
+
+Gpx3  
+![Gpx3](/Users/deanlee/Desktop/sleep_neurons/Gpx3.png)  
+
+Ngb  
+![Ngb](/Users/deanlee/Desktop/sleep_neurons/Ngb.png)  
+
+Cluster 4: Chat, Cd44, Slc5a7  
+
+Chat  
+![Chat](/Users/deanlee/Desktop/sleep_neurons/Chat.png)  
+
+Cd44  
+![Cd44](/Users/deanlee/Desktop/sleep_neurons/Cd44.png)  
+
+Slc5a7  
+![Slc5a7](/Users/deanlee/Desktop/sleep_neurons/Slc5a7.png)  
+
+# Discussion
+
+I have reanalyzed Chung et al.'s scRNA-seq dataset mainly with the use of the the Seurat package in R. My analysis showed that these neurons could be subdivided into at least three groups according to their gene expression patterns. The largest group, as previously described by Chung et al., consists of neurons expressing Tac1 and Pdyn. These two markers capture the majority of the sleep-inducing neurons in this study. My further analysis, however, revealed that at least two other groups of neurons, distinct from the Tac1/Pdyn neurons, can be defined from the same dataset. One of these groups is marked by Gpx3/Ngb (Cluster 3), and another group is marked by Chat/Cd44/Slc5a7 (Cluster 4). Futhermore, the Tac1/Pdyn population has a subset of neurons that is marked by Col19a1/C1ql2 (Cluster 1/2). These results suggest that within the population of sleep-inducing neurons in the POA, genetically distinct subpopulations exist. Having the markers for each of these subpopulations paves the way to validation steps in vivo to show whether these genetically distinct cells are also anatomically distinct in the POA and functionally distinct in the fine regulation of sleep. Initial data from the Allen Brain Institute already suggest that these are anatomically distinct populations.
+
+In addition to cell type identification in heterogeneous tissues, scRNA-seq can serve many other purposes. It can be used to identify gene expression differences bewteen cells in different states. These might be cells in different stages of the cell cycle, cells in different stages of normal development, cells that are activated versus cells that are dormant, etc. The range of biological questions that can be addressed with scRNA-seq is incredibly vast. As such, it is unlikely that scRNA-seq will go out of style anytime soon.
+
+# References
+1. Aaron Lun and Davide Risso (2017). SingleCellExperiment: S4 Classes for Single Cell Data. R package version 1.0.0.  
+2. Andrew McDavid, Greg Finak and Masanao Yajima (2017). MAST: Model-based Analysis of Single Cell Transcriptomics. R package version 1.4.1. https://github.com/RGLab/MAST/  
+3. Butler, A., et al. (2018). Integrating single-cell transcriptomic data across different conditions, technologies, and species. Nature Biotechnology *36*, 411-420.  
+4. Chung, S., et al. (2017). Identification of preoptic sleep neurons using retrogreade labeling and gene profiling. Nature *545*, 477-481.  
+5. Jaitin, D.A., et al. (2014). Massively parallel single-cell RNA-seq for marker-free decomposition of tissues into cell types. Science *343*, 776-779.  
+6. McCarthy, D.J., et al. (2017). Scater: pre-processing, quality control, normalization and visualization of single-cell RNA-seq data in R. Bioinformatics *33*, 1179-1186.  
+7. Rostom, R., et al. (2017). Computational approaches for interpreting scRNA-seq data. FEBS Letters *591*, 2213-2225.
+
+# Supplement
+
+```{r load libraries,results='hide'}
+library(SingleCellExperiment)
+library(scater)
+library(Seurat)
+library(MAST)
+library(dplyr)
+```
+
+```{r read data}
+setwd("/Users/deanlee/Desktop/sleep_neurons")
+
+# there is a header, the first column is our row names
+data = read.table('counts.matrix.txt', header=T, row.names=1)
+```
+
+```{r create metadata}
+meta = data.frame(matrix(NA, nrow=ncol(data), ncol=2))
+colnames(meta) = c('marker', 'position')
+
+rownames(meta) = colnames(data)
+meta[77:84,'marker'] = 'chat'
+meta[77:84,'position'] = 'posterior'
+meta[25:76,'marker'] = 'vgat'
+meta[25:76,'position'] = 'anterior'
+meta[14:24,'marker'] = 'gad'
+meta[14:24,'position'] = 'anterior'
+meta[1:13,'marker'] = 'gad'
+meta[1:13,'position'] = 'posterior'
+```
+
+```{r create SingleCellExperiment object}
+sce = SingleCellExperiment(assays = list(counts = as.matrix(data)),
+                           colData = meta)
+```
+
+##### Prep for QC
+
+```{r}
+# remove genes that are not expressed in any cell
+genes_to_keep = rowSums(counts(sce) > 0) > 0
+sce = sce[genes_to_keep,]
+
+# define control sequences, such as ERCC spike-ins
+isSpike(sce, "ERCC") = grepl("^ERCC-", rownames(sce))
+
+# get quality metrics, such as total_counts, total_features, etc.
+sce = calculateQCMetrics(sce,
+                         feature_controls = list(ERCC = isSpike(sce, "ERCC")))
+```
+
+##### Cell QC
+
+```{r}
+# see number of reads per cell
+hist(sce$total_counts, breaks = 100)
+abline(v = 500000, col = 'red')
+# remove cells with low number of reads (<500000)
+filter_by_total_counts = sce$total_counts > 500000
+
+# see genes detected per cell
+hist(sce$total_features, breaks = 100)
+abline(v = 5000, col = 'red')
+# remove cells with low number of genes detected
+filter_by_total_features = sce$total_features > 5000
+
+# see ratio between ERCCs and endogenous RNAs
+plotPhenoData(sce,
+              aes_string(x = "total_features", y = "pct_counts_ERCC")
+              )
+# remove cells with greater than 10% of RNAs being ERCCs
+filter_by_ERCC = sce$pct_counts_ERCC < 10
+
+# filter cells manually based on the QC visualizations above
+sce$use = (
+  # sufficient counts
+  filter_by_total_counts &
+  # sufficient features (genes)
+  filter_by_total_features &
+  # sufficient endogenous RNA
+  filter_by_ERCC
+)
+table(sce$use) # filtered out 7 cells
+```
+
+##### Gene QC
+
+```{r}
+plotQC(sce, type = "highest-expression")
+# the relatively flat distribution suggests that there's good coverage of the transcriptome
+
+# to keep a gene, require at least five reads in at least two cells
+filter_genes = apply(counts(sce[,colData(sce)$use]), 1, function(x) length(x[x>5]) >= 2)
+rowData(sce)$use = filter_genes
+table(filter_genes) # 9102 genes filtered out, 18530 genes remain
+```
+
+##### Save QCed Dataset to Use with Seurat
+
+```{r}
+dim(sce[rowData(sce)$use, colData(sce)$use]) # after QC, 77 cells and 18530 genes left
+
+# generate log2-transformed counts, save it into a new slot
+assay(sce, "logcounts_raw") = log2(counts(sce) + 1)
+
+# remove saved PCA results from the reducedDim slot
+reducedDim(sce) = NULL
+```
+
+```{r}
+# downsample
+sce.qc <- sce[rowData(sce)$use, colData(sce)$use]
+
+Down_Sample_Matrix = function (expr_mat) {
+    min_lib_size <- min(colSums(expr_mat))
+    down_sample <- function(x) {
+        prob <- min_lib_size/sum(x)
+        return(unlist(lapply(x, function(y) {
+            rbinom(1, y, prob)
+        })))
+    }
+    down_sampled_mat <- apply(expr_mat, 2, down_sample)
+    return(down_sampled_mat)
+}
+
+logcounts(sce.qc) <- log2(Down_Sample_Matrix(counts(sce.qc)) + 1)
+```
+
+##### Seurat
+
+```{r}
+# convert SingleCellExperiment object to Seurat object
+sn = Convert(sce.qc, 'seurat')
+```
+
+```{r}
+# check the distribution of reads per cell pre normalization
+hist(colSums(as.matrix(sn@raw.data[,colnames(sn@data)])),
+     breaks = 100,
+     main = "total expression, pre-normalization",
+     xlab = "# of reads per cell")
+```
+
+```{r}
+# log-normalize data
+sn = NormalizeData(sn, normalization.method = "LogNormalize", scale.factor = 10000)
+
+# check the distribution of UMIs per cell post normalization
+hist(colSums(as.matrix(sn@data)),
+     breaks = 100,
+     main = "total expression, post-normalization",
+     xlab = "# of reads per cell")
+```
+
+```{r}
+# check distribution of genes, UMIs/reads in each cell for outliers
+VlnPlot(sn, c("nGene", "nUMI"), nCol = 2, size.title.use = 12, point.size.use = 0.005)
+```
+
+```{r}
+# plot difference measurements against nUMI/reads
+GenePlot(sn, gene1 = "nUMI", gene2 = "nGene", cex.use = 0.5)
+```
+
+```{r}
+# find variable genes to use to compute PCs
+sn = FindVariableGenes(sn, y.cutoff = 1, x.low.cutoff = 0.0125, x.high.cutoff = 2)
+length(sn@var.genes)
+```
+
+```{r}
+# compute PCs
+sn = ScaleData(sn, genes.use = sn@var.genes , vars.to.regress = c("nUMI"), use.umi = TRUE, model.use = 'negbinom', block.size = 5000, display.progress = F)
+sn = RunPCA(sn, pcs.compute = 30, maxit = 250, verbose = T)
+PCElbowPlot(sn, num.pc = 30)
+```
+
+```{r}
+# select PCs to use for unsupervised clustering
+sn = JackStraw(sn, num.pc = 30, display.progress = F)
+JackStrawPlot(sn, PCs = 1:30)
+sn_dims = c(1,3,4,7,13)
+```
+
+```{r}
+# perform unsupervised clustering
+sn = FindClusters(sn, dims.use = sn_dims, k.param = 10, save.SNN = T, n.start = 10, algorithm = 3, resolution = 1, print.output = F)
+
+sn = BuildClusterTree(sn, pcs.use = sn_dims, do.reorder = T, reorder.numeric = T, show.progress = F)
+```
+
+```{r}
+# visualize clusters on tSNE plots
+sn = RunTSNE(sn, reduction.use = "pca", dims.use = sn_dims, eta = 200, max_iter = 400, perplexity = 10, theta = 0.1, verbose = TRUE)
+cols = scales::hue_pal()(length(levels(sn@ident)))
+TSNEPlot(sn, do.label = T, colors.use = cols)
+```
+
+```{r,results='hide'}
+# find differentially expressed genes for each cluster
+sn.markers = FindAllMarkers(sn, logfc.threshold = 0.5, test.use = 'MAST', only.pos = T, min.diff.pct = .1, min.pct = .1, latent.vars = c('nUMI'), do.print = TRUE)
+
+# convert ENSEMBL IDs to common gene names
+library(biomaRt)
+mart = useMart(biomart = 'ensembl', dataset = 'mmusculus_gene_ensembl')
+symbols = getBM(attributes = c('ensembl_gene_id', 'external_gene_name'), 
+                filters = 'ensembl_gene_id', values = rownames(data) , mart = mart)
+colnames(symbols) = c('ensembl_id', 'gene_symbol')
+colnames(sn.markers)[7] = 'ensembl_id'
+sn.markers = merge(sn.markers, symbols, by = 'ensembl_id')
+
+write.table(sn.markers, "/Users/deanlee/Desktop/sleep_neurons/sn_markers.tsv", quote = F, sep = "\t", row.names = F)
+```
+
+##### See Markers for Each Cluster
+
+```{r}
+filter(sn.markers, cluster == 1)
+```
+
+```{r}
+filter(sn.markers, cluster == 2)
+```
+
+```{r}
+filter(sn.markers, cluster == 3)
+```
+
+```{r}
+filter(sn.markers, cluster == 4)
+```
+
+Clusters 1 and 2 seem to share some markers, while Clusters 3 and 4 can each be identified by some markers. It may be that the heterogeneity of these sleep-inducing neurons is really better described by three rather than four subgroups. The following are the markers for the three subgroups (Cluster 1/2, Cluster 3, and Cluster 4) that are also confirmed to be in the POA by in situ hybridization data from the Allen Brain Institute.
+
+Clusters 1/2: Col19a1, C1ql2  
+Clusters 3: Gpx3, Ngb  
+Cluster 4: Chat, Cd44, Slc5a7  
+
+Chung et al. already reported that this population of sleep-inducing neurons is generally marked by Tac1 and Pdyn. The following plot shows that the Tac1/Pdyn neurons are largely within Cluster 1/2 and Cluster 4.
+
+```{r}
+# Tac1 in red, Pdyn in blue, overlap in purple
+FeaturePlot(sn, features.plot = c("ENSMUSG00000061762","ENSMUSG00000027400"), cols.use = c("grey", "red", "blue"), reduction.use = "tsne", max.cutoff = 0.5, overlay = T)
+```
+
+Col19a1 and C1ql2 are two largely overlapping markers of Cluster 1/2. They delineate a clear subset of the Tac1/Pdyn neurons.
+
+```{r}
+# Col19a1 in red, C1ql2 in blue, overlap in purple
+FeaturePlot(sn, features.plot = c("ENSMUSG00000026141","ENSMUSG00000036907"), cols.use = c("grey", "red", "blue"), reduction.use = "tsne", max.cutoff = 0.5, overlay = T)
+```
+
+A subset of the neurons in the dataset actually does not express Tac1 or Pdyn, but expresses Chat instead. These Chat-expressing neurons are all part of Cluster 3.
+
+```{r}
+# Tac1 in red, Chat in blue, overlap in purple
+FeaturePlot(sn, features.plot = c("ENSMUSG00000061762","ENSMUSG00000021919"), cols.use = c("grey", "red", "blue"), reduction.use = "tsne", max.cutoff = 0.5, overlay = T)
+```
+
+```{r}
+# Pdyn in red, Chat in blue, overlap in purple
+FeaturePlot(sn, features.plot = c("ENSMUSG00000027400","ENSMUSG00000021919"), cols.use = c("grey", "red", "blue"), reduction.use = "tsne", max.cutoff = 0.5, overlay = T)
+```
+
+The Chat neurons are additionally marked by Slc5a7 and Cd44.
+
+```{r}
+# Slc5a7 in red, Chat in blue, overlap in purple
+FeaturePlot(sn, features.plot = c("ENSMUSG00000023945","ENSMUSG00000021919"), cols.use = c("grey", "red", "blue"), reduction.use = "tsne", max.cutoff = 0.5, overlay = T)
+```
+
+```{r}
+# Cd44 in red, Chat in blue, overlap in purple
+FeaturePlot(sn, features.plot = c("ENSMUSG00000005087","ENSMUSG00000021919"), cols.use = c("grey", "red", "blue"), reduction.use = "tsne", max.cutoff = 0.5, overlay = T)
+```
+
+Gpx3 marks another population that is fairly distinct from both the Chat and Tac1/Pdyn populations.
+
+```{r}
+# Gpx3 in red, Chat in blue, overlap in purple
+FeaturePlot(sn, features.plot = c("ENSMUSG00000018339","ENSMUSG00000021919"), cols.use = c("grey", "red", "blue"), reduction.use = "tsne", max.cutoff = 0.5, overlay = T)
+```
+
+```{r}
+# Gpx3 in red, Tac1 in blue, overlap in purple
+FeaturePlot(sn, features.plot = c("ENSMUSG00000018339","ENSMUSG00000061762"), cols.use = c("grey", "red", "blue"), reduction.use = "tsne", max.cutoff = 0.5, overlay = T)
+```
+
+```{r}
+# Gpx3 in red, Pdyn in blue, overlap in purple
+FeaturePlot(sn, features.plot = c("ENSMUSG00000018339","ENSMUSG00000027400"), cols.use = c("grey", "red", "blue"), reduction.use = "tsne", max.cutoff = 0.5, overlay = T)
+```
+
+The Gpx3 popluation is also marked by Ngb.
+
+```{r}
+# Gpx3 in red, Ngb in blue, overlap in purple
+FeaturePlot(sn, features.plot = c("ENSMUSG00000018339","ENSMUSG00000021032"), cols.use = c("grey", "red", "blue"), reduction.use = "tsne", max.cutoff = 0.5, overlay = T)
+```
+
+```{r}
+sessionInfo()
+```
